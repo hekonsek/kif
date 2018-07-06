@@ -1,0 +1,4 @@
+apiVersion: v1
+description: kube-sre-essentials
+name: kube-sre-essentials
+version: 0.3.0
