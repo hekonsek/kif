@@ -12,19 +12,25 @@ import (
 	"time"
 )
 
+var verbose bool
+var profile string
+var dryRun bool
 var ingressIP string
 var ingressNodeSelector string
 
 func init() {
-	createPlatformCmd.Flags().StringVar(&ingressIP, "ingressIP", "", "IP address of ingress node.")
+	createPlatformCmd.Flags().BoolVarP(&dryRun, "verbose", "v", false, "Indicates if a verbose output mode should be used.")
+	createPlatformCmd.Flags().BoolVarP(&dryRun, "dry-run", "d", false, "Indicates if a dry run should be used i.e. kif should generate Helm charts without executing them.")
+	createPlatformCmd.Flags().StringVar(&profile, "cloud", "baremetal", "Cloud provider to use.")
+	createPlatformCmd.Flags().StringVar(&ingressIP, "ingress-ip", "", "IP address of ingress node.")
 	createPlatformCmd.Flags().StringVar(&ingressNodeSelector, "ingressNodeSelector", "machine0001", "Node selector of ingress pod.")
 	rootCmd.AddCommand(createPlatformCmd)
 }
 
 var createPlatformCmd = &cobra.Command{
 	Use:   "create platform",
-	Short: "Create skrt platform.",
-	Long:  `Create skrt platform.`,
+	Short: "Create kif platform.",
+	Long:  `Create kif platform.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		templateBox, err := rice.FindBox("templates")
 		ExitOnError(err)
@@ -95,15 +101,16 @@ var createPlatformCmd = &cobra.Command{
 		err = valuesTemplate.Execute(valuesFile, valuesx)
 		ExitOnError(err)
 
-		xxx := exec.Command("htpasswd", "-c", "-b", skrtPlatform.Sandbox+"/auth", "admin", "admin")
-		x, _ := xxx.CombinedOutput()
-		println(string(x))
+		command := exec.Command("htpasswd", "-c", "-b", skrtPlatform.Sandbox+"/auth", "admin", "admin")
+		commandOutput, err := command.CombinedOutput()
+		ExitOnError(err)
+		if verbose {
+			println("Generating basic auth authentication for Prometheus:")
+			println(string(commandOutput))
+		}
 
 		valuesxx, err := templateBox.String("secret-ingress-auth-prometheus.yml")
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
+		ExitOnError(err)
 		prometheusIngressAuthTemplate, err := template.New("prometheusIngressAuthTemplate").Parse(valuesxx)
 		if err != nil {
 			fmt.Println(err)
@@ -122,15 +129,17 @@ var createPlatformCmd = &cobra.Command{
 		err = prometheusIngressAuthTemplate.Execute(prometheusIngressAuthFile, valuesx)
 		ExitOnError(err)
 
-		xxx = exec.Command("helm", "dependency", "update", skrtPlatform.Sandbox)
-		x, _ = xxx.CombinedOutput()
-		println(string(x))
+		if dryRun {
+			println("Platform chart generated successfully: " + skrtPlatform.Sandbox)
+		} else {
+			command = exec.Command("helm", "dependency", "update", skrtPlatform.Sandbox)
+			commandOutput, _ = command.CombinedOutput()
+			println(string(commandOutput))
 
-		xxx = exec.Command("helm", "install", "--namespace=kube-system", "--name=skrt", skrtPlatform.Sandbox, "--values="+skrtPlatform.Sandbox+"/values.yml")
-		x, _ = xxx.CombinedOutput()
-		println(string(x))
-
-		println(skrtPlatform.Sandbox)
+			command = exec.Command("helm", "install", "--namespace=kube-system", "--name=skrt", skrtPlatform.Sandbox, "--values="+skrtPlatform.Sandbox+"/values.yml")
+			commandOutput, _ = command.CombinedOutput()
+			println(string(commandOutput))
+		}
 	},
 }
 
@@ -140,7 +149,7 @@ type SkrtPlatform struct {
 
 func NewSkrtPlatform() SkrtPlatform {
 	return SkrtPlatform{
-		Sandbox: fmt.Sprintf("/tmp/skrt_%d", time.Now().Unix()),
+		Sandbox: fmt.Sprintf("/tmp/kif_%d", time.Now().Unix()),
 	}
 }
 
