@@ -109,18 +109,15 @@ var createPlatformCmd = &cobra.Command{
 			println(string(commandOutput))
 		}
 
-		valuesxx, err := templateBox.String("secret-ingress-auth-prometheus.yml")
+		prometheusAuthSecretTemplateFile, err := templateBox.String("secret-ingress-auth-prometheus.yml")
 		ExitOnError(err)
-		prometheusIngressAuthTemplate, err := template.New("prometheusIngressAuthTemplate").Parse(valuesxx)
+		prometheusIngressAuthTemplate, err := template.New("prometheusAuthSecretTemplate").Parse(prometheusAuthSecretTemplateFile)
 		if err != nil {
 			fmt.Println(err)
 			return
 		}
 		prometheusIngressAuthFile, err := os.Create(skrtPlatform.Sandbox + "/templates/secret-ingress-auth-prometheus.yml")
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
+		ExitOnError(err)
 		auth, err := ioutil.ReadFile(skrtPlatform.Sandbox + "/auth")
 		ExitOnError(err)
 		valuesx["Prometheus"]["Ingress"] = map[string]interface{}{
@@ -143,12 +140,12 @@ var createPlatformCmd = &cobra.Command{
 	},
 }
 
-type SkrtPlatform struct {
+type KifPlatform struct {
 	Sandbox string
 }
 
-func NewSkrtPlatform() SkrtPlatform {
-	return SkrtPlatform{
+func NewSkrtPlatform() KifPlatform {
+	return KifPlatform{
 		Sandbox: fmt.Sprintf("/tmp/kif_%d", time.Now().Unix()),
 	}
 }
