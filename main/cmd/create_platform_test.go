@@ -6,6 +6,10 @@ import (
 	"testing"
 )
 
+func TestThatNilErrorDoesNotExitApplication(t *testing.T) {
+	ExitOnError(nil)
+}
+
 func TestThatKifPlatformGeneratedSandboxInTmp(t *testing.T) {
 	kif, err := NewKifPlatform()
 	assert.NoError(t, err)
@@ -16,9 +20,15 @@ func TestThatKifPlatformCreatedSandbox(t *testing.T) {
 	kif, err := NewKifPlatform()
 	assert.NoError(t, err)
 	_, err = os.Stat(kif.Sandbox)
-	assert.NoError(t, err, "/tmp/kif_")
+	assert.NoError(t, err)
 }
 
-func TestThatNilErrorDoesNotExitApplication(t *testing.T) {
-	ExitOnError(nil)
+func TestThatKifPlatformRenderedIssuer(t *testing.T) {
+	kif, err := NewKifPlatform()
+	assert.NoError(t, err)
+	config := map[string]interface{}{}
+	err = kif.RenderTemplate("templates/issuer-letsencrypt", config)
+	assert.NoError(t, err)
+	_, err = os.Stat(kif.Sandbox + "/templates/issuer-letsencrypt.yml")
+	assert.NoError(t, err)
 }

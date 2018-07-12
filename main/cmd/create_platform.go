@@ -35,15 +35,12 @@ var createPlatformCmd = &cobra.Command{
 	Short: "Create kif platform.",
 	Long:  `Create kif platform.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		templateBox, err := rice.FindBox("templates")
-		ExitOnError(err)
+		kifPlatform := OrExitOnError(NewKifPlatform()).(*KifPlatform)
 
-		kifPlatform := OrExitOnError(NewKifPlatform()).(KifPlatform)
-
-		chart := OrExitOnError(templateBox.Bytes("Chart.yaml")).([]byte)
+		chart := OrExitOnError(kifPlatform.TemplatesBox.Bytes("Chart.yaml")).([]byte)
 		ExitOnError(ioutil.WriteFile(kifPlatform.Sandbox+"/Chart.yaml", chart, 0644))
 
-		requirements, err := templateBox.Bytes("requirements.yaml")
+		requirements, err := kifPlatform.TemplatesBox.Bytes("requirements.yaml")
 		if err != nil {
 			fmt.Println(err)
 			return
@@ -54,12 +51,12 @@ var createPlatformCmd = &cobra.Command{
 			return
 		}
 
-		values, err := templateBox.String("values.yml")
+		valuesTemplateText, err := kifPlatform.TemplatesBox.String("values.yml")
 		if err != nil {
 			fmt.Println(err)
 			return
 		}
-		valuesTemplate, err := template.New("valuesTemplate").Parse(values)
+		valuesTemplate, err := template.New("valuesTemplate").Parse(valuesTemplateText)
 		if err != nil {
 			fmt.Println(err)
 			return
@@ -78,7 +75,7 @@ var createPlatformCmd = &cobra.Command{
 			os.Exit(-1)
 		}
 
-		valuesx := map[string]map[string]interface{}{
+		kifConfiguration := map[string]map[string]interface{}{
 			"Ingress": {
 				"ExternalIp":   ingressIP,
 				"NodeSelector": ingressNodeSelector,
@@ -90,7 +87,7 @@ var createPlatformCmd = &cobra.Command{
 				"Host": fmt.Sprintf("prometheus.%s.nip.io", ingressIP),
 			},
 		}
-		err = valuesTemplate.Execute(valuesFile, valuesx)
+		err = valuesTemplate.Execute(valuesFile, kifConfiguration)
 		ExitOnError(err)
 
 		command := exec.Command("htpasswd", "-c", "-b", kifPlatform.Sandbox+"/auth", "admin", "admin")
@@ -101,15 +98,9 @@ var createPlatformCmd = &cobra.Command{
 			println(string(commandOutput))
 		}
 
-		issuer, err := templateBox.String("issuer-letsencrypt.yml")
-		ExitOnError(err)
-		issuerTemplate, err := template.New("issuer").Parse(issuer)
-		ExitOnError(err)
-		issuerTemplateFile, err := os.Create(kifPlatform.Sandbox + "/templates/issuer-letsencrypt.yml")
-		ExitOnError(err)
-		ExitOnError(issuerTemplate.Execute(issuerTemplateFile, valuesx))
+		ExitOnError(kifPlatform.RenderTemplate("templates/issuer-letsencrypt", kifConfiguration))
 
-		prometheusAuthSecretTemplateFile, err := templateBox.String("secret-ingress-auth-prometheus.yml")
+		prometheusAuthSecretTemplateFile, err := kifPlatform.TemplatesBox.String("secret-ingress-auth-prometheus.yml")
 		ExitOnError(err)
 		prometheusIngressAuthTemplate, err := template.New("prometheusAuthSecretTemplate").Parse(prometheusAuthSecretTemplateFile)
 		if err != nil {
@@ -118,12 +109,11 @@ var createPlatformCmd = &cobra.Command{
 		}
 		prometheusIngressAuthFile, err := os.Create(kifPlatform.Sandbox + "/templates/secret-ingress-auth-prometheus.yml")
 		ExitOnError(err)
-		auth, err := ioutil.ReadFile(kifPlatform.Sandbox + "/auth")
-		ExitOnError(err)
-		valuesx["Prometheus"]["Ingress"] = map[string]interface{}{
+		auth := OrExitOnError(ioutil.ReadFile(kifPlatform.Sandbox + "/auth")).([]byte)
+		kifConfiguration["Prometheus"]["Ingress"] = map[string]interface{}{
 			"Auth": base64.StdEncoding.EncodeToString(auth),
 		}
-		err = prometheusIngressAuthTemplate.Execute(prometheusIngressAuthFile, valuesx)
+		err = prometheusIngressAuthTemplate.Execute(prometheusIngressAuthFile, kifConfiguration)
 		ExitOnError(err)
 
 		if dryRun {
@@ -140,8 +130,11 @@ var createPlatformCmd = &cobra.Command{
 	},
 }
 
+// Kif platform
+
 type KifPlatform struct {
-	Sandbox string
+	Sandbox      string
+	TemplatesBox *rice.Box
 }
 
 func NewKifPlatform() (*KifPlatform, error) {
@@ -150,9 +143,36 @@ func NewKifPlatform() (*KifPlatform, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	templateBox, err := rice.FindBox("templates")
+	if err != nil {
+		return nil, err
+	}
+
 	return &KifPlatform{
-		Sandbox: sandbox,
+		Sandbox:      sandbox,
+		TemplatesBox: templateBox,
 	}, nil
+}
+
+func (kif *KifPlatform) RenderTemplate(name string, kifConfiguration interface{}) error {
+	templateText, err := kif.TemplatesBox.String(name + ".yml")
+	if err != nil {
+		return err
+	}
+	parsedTemplate, err := template.New(name).Parse(templateText)
+	if err != nil {
+		return err
+	}
+	targetFile, err := os.Create(kif.Sandbox + "/" + name + ".yml")
+	if err != nil {
+		return err
+	}
+	err = parsedTemplate.Execute(targetFile, kifConfiguration)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 // Helper
