@@ -15,6 +15,9 @@ import (
 var verbose bool
 var profile string
 var dryRun bool
+var chartName string
+var chartVersion string
+
 var ingressIP string
 var ingressNodeSelector string
 
@@ -24,9 +27,14 @@ func init() {
 	createPlatformCmd.Flags().BoolVarP(&dryRun, "verbose", "v", false, "Indicates if a verbose output mode should be used.")
 	createPlatformCmd.Flags().BoolVarP(&dryRun, "dry-run", "d", false, "Indicates if a dry run should be used i.e. kif should generate Helm charts without executing them.")
 	createPlatformCmd.Flags().StringVar(&profile, "cloud", "baremetal", "Cloud provider to use.")
+	createPlatformCmd.Flags().StringVar(&chartName, "chart-name", "kif", "Name of the generated chart.")
+	createPlatformCmd.Flags().StringVar(&chartVersion, "chart-version", "0.0.0", "Version of the generated chart.")
+
 	createPlatformCmd.Flags().StringVar(&ingressIP, "ingress-ip", "", "IP address of ingress node.")
-	createPlatformCmd.Flags().StringVar(&ingressNodeSelector, "ingressNodeSelector", "machine0001", "Node selector of ingress pod.")
+	createPlatformCmd.Flags().StringVar(&ingressNodeSelector, "ingress-node-selector", "machine0001", "Node selector of ingress pod.")
+
 	createPlatformCmd.Flags().StringVar(&caCertEmail, "cert-email", "", "CA certificate administrator e-mail used during ACME registration process.")
+
 	rootCmd.AddCommand(createPlatformCmd)
 }
 
@@ -35,23 +43,39 @@ var createPlatformCmd = &cobra.Command{
 	Short: "Create kif platform.",
 	Long:  `Create kif platform.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		kifPlatform := OrExitOnError(NewKifPlatform()).(*KifPlatform)
+		kif := OrExitOnError(NewKifPlatform()).(*KifPlatform)
 
-		chart := OrExitOnError(kifPlatform.TemplatesBox.Bytes("Chart.yaml")).([]byte)
-		ExitOnError(ioutil.WriteFile(kifPlatform.Sandbox+"/Chart.yaml", chart, 0644))
-
-		requirements, err := kifPlatform.TemplatesBox.Bytes("requirements.yaml")
-		if err != nil {
-			fmt.Println(err)
-			return
+		if ingressIP == "" {
+			fmt.Println("Ingress IP cannot be empty. Please use --ingress-ip option.")
+			os.Exit(-1)
 		}
-		err = ioutil.WriteFile(kifPlatform.Sandbox+"/requirements.yaml", requirements, 0644)
-		if err != nil {
-			fmt.Println(err)
-			return
+		if caCertEmail == "" {
+			fmt.Println("CA cert admin e-mail cannot be empty. Please use --cert-email option.")
+			os.Exit(-1)
+		}
+		kif.Configuration = map[string]interface{}{
+			"Chart": map[string]interface{}{
+				"Name":    chartName,
+				"Version": chartVersion,
+			},
+			"Ingress": map[string]interface{}{
+				"ExternalIp":   ingressIP,
+				"NodeSelector": ingressNodeSelector,
+			},
+			"CertManager": map[string]interface{}{
+				"Email": caCertEmail,
+			},
+			"Prometheus": map[string]interface{}{
+				"Host": fmt.Sprintf("prometheus.%s.nip.io", ingressIP),
+			},
 		}
 
-		valuesTemplateText, err := kifPlatform.TemplatesBox.String("values.yml")
+		ExitOnError(kif.RenderTemplate("Chart.yaml"))
+
+		requirements := OrExitOnError(kif.TemplatesBox.Bytes("requirements.yaml")).([]byte)
+		ExitOnError(ioutil.WriteFile(kif.Sandbox+"/requirements.yaml", requirements, 0644))
+
+		valuesTemplateText, err := kif.TemplatesBox.String("values.yml")
 		if err != nil {
 			fmt.Println(err)
 			return
@@ -61,36 +85,16 @@ var createPlatformCmd = &cobra.Command{
 			fmt.Println(err)
 			return
 		}
-		valuesFile, err := os.Create(kifPlatform.Sandbox + "/values.yml")
+		valuesFile, err := os.Create(kif.Sandbox + "/values.yml")
 		if err != nil {
 			fmt.Println(err)
 			return
 		}
-		if ingressIP == "" {
-			fmt.Println("Ingress IP cannot be empty. Please use --ingress-ip option.")
-			os.Exit(-1)
-		}
-		if caCertEmail == "" {
-			fmt.Println("CA cert admin e-mail cannot be empty. Please use --cert-email option.")
-			os.Exit(-1)
-		}
 
-		kifConfiguration := map[string]map[string]interface{}{
-			"Ingress": {
-				"ExternalIp":   ingressIP,
-				"NodeSelector": ingressNodeSelector,
-			},
-			"CertManager": {
-				"Email": caCertEmail,
-			},
-			"Prometheus": {
-				"Host": fmt.Sprintf("prometheus.%s.nip.io", ingressIP),
-			},
-		}
-		err = valuesTemplate.Execute(valuesFile, kifConfiguration)
+		err = valuesTemplate.Execute(valuesFile, kif.Configuration)
 		ExitOnError(err)
 
-		command := exec.Command("htpasswd", "-c", "-b", kifPlatform.Sandbox+"/auth", "admin", "admin")
+		command := exec.Command("htpasswd", "-c", "-b", kif.Sandbox+"/auth", "admin", "admin")
 		commandOutput, err := command.CombinedOutput()
 		ExitOnError(err)
 		if verbose {
@@ -98,32 +102,34 @@ var createPlatformCmd = &cobra.Command{
 			println(string(commandOutput))
 		}
 
-		ExitOnError(kifPlatform.RenderTemplate("templates/issuer-letsencrypt", kifConfiguration))
+		ExitOnError(kif.RenderTemplate("templates/issuer-letsencrypt"))
 
-		prometheusAuthSecretTemplateFile, err := kifPlatform.TemplatesBox.String("secret-ingress-auth-prometheus.yml")
+		prometheusAuthSecretTemplateFile, err := kif.TemplatesBox.String("secret-ingress-auth-prometheus.yml")
 		ExitOnError(err)
 		prometheusIngressAuthTemplate, err := template.New("prometheusAuthSecretTemplate").Parse(prometheusAuthSecretTemplateFile)
 		if err != nil {
 			fmt.Println(err)
 			return
 		}
-		prometheusIngressAuthFile, err := os.Create(kifPlatform.Sandbox + "/templates/secret-ingress-auth-prometheus.yml")
+		prometheusIngressAuthFile, err := os.Create(kif.Sandbox + "/templates/secret-ingress-auth-prometheus.yml")
 		ExitOnError(err)
-		auth := OrExitOnError(ioutil.ReadFile(kifPlatform.Sandbox + "/auth")).([]byte)
-		kifConfiguration["Prometheus"]["Ingress"] = map[string]interface{}{
-			"Auth": base64.StdEncoding.EncodeToString(auth),
+		auth := OrExitOnError(ioutil.ReadFile(kif.Sandbox + "/auth")).([]byte)
+		kif.Configuration["Prometheus"] = map[string]interface{}{
+			"Ingress": map[string]interface{}{
+				"Auth": base64.StdEncoding.EncodeToString(auth),
+			},
 		}
-		err = prometheusIngressAuthTemplate.Execute(prometheusIngressAuthFile, kifConfiguration)
+		err = prometheusIngressAuthTemplate.Execute(prometheusIngressAuthFile, kif.Configuration)
 		ExitOnError(err)
 
 		if dryRun {
-			println("Platform chart generated successfully: " + kifPlatform.Sandbox)
+			println("Platform chart generated successfully: " + kif.Sandbox)
 		} else {
-			command = exec.Command("helm", "dependency", "update", kifPlatform.Sandbox)
+			command = exec.Command("helm", "dependency", "update", kif.Sandbox)
 			commandOutput, _ = command.CombinedOutput()
 			println(string(commandOutput))
 
-			command = exec.Command("helm", "install", "--namespace=kube-system", "--name=skrt", kifPlatform.Sandbox, "--values="+kifPlatform.Sandbox+"/values.yml")
+			command = exec.Command("helm", "install", "--namespace=kube-system", "--name=skrt", kif.Sandbox, "--values="+kif.Sandbox+"/values.yml")
 			commandOutput, _ = command.CombinedOutput()
 			println(string(commandOutput))
 		}
@@ -133,8 +139,9 @@ var createPlatformCmd = &cobra.Command{
 // Kif platform
 
 type KifPlatform struct {
-	Sandbox      string
-	TemplatesBox *rice.Box
+	Sandbox       string
+	TemplatesBox  *rice.Box
+	Configuration map[string]interface{}
 }
 
 func NewKifPlatform() (*KifPlatform, error) {
@@ -150,13 +157,14 @@ func NewKifPlatform() (*KifPlatform, error) {
 	}
 
 	return &KifPlatform{
-		Sandbox:      sandbox,
-		TemplatesBox: templateBox,
+		Sandbox:       sandbox,
+		TemplatesBox:  templateBox,
+		Configuration: map[string]interface{}{},
 	}, nil
 }
 
-func (kif *KifPlatform) RenderTemplate(name string, kifConfiguration interface{}) error {
-	templateText, err := kif.TemplatesBox.String(name + ".yml")
+func (kif *KifPlatform) RenderTemplate(name string) error {
+	templateText, err := kif.TemplatesBox.String(name)
 	if err != nil {
 		return err
 	}
@@ -164,11 +172,11 @@ func (kif *KifPlatform) RenderTemplate(name string, kifConfiguration interface{}
 	if err != nil {
 		return err
 	}
-	targetFile, err := os.Create(kif.Sandbox + "/" + name + ".yml")
+	targetFile, err := os.Create(kif.Sandbox + "/" + name)
 	if err != nil {
 		return err
 	}
-	err = parsedTemplate.Execute(targetFile, kifConfiguration)
+	err = parsedTemplate.Execute(targetFile, kif.Configuration)
 	if err != nil {
 		return err
 	}

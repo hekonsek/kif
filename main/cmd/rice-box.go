@@ -10,8 +10,8 @@ func init() {
 	// define files
 	file2 := &embedded.EmbeddedFile{
 		Filename:    "Chart.yaml",
-		FileModTime: time.Unix(1530546712, 0),
-		Content:     string("apiVersion: v1\ndescription: kube-sre-essentials\nname: kube-sre-essentials\nversion: 0.3.0\n"),
+		FileModTime: time.Unix(1531405548, 0),
+		Content:     string("apiVersion: v1\nname: \"{{ .Chart.Name }}\"\nversion: \"{{ .Chart.Version }}\"\n"),
 	}
 	file3 := &embedded.EmbeddedFile{
 		Filename:    "requirements.yaml",
@@ -37,7 +37,7 @@ func init() {
 	// define dirs
 	dir1 := &embedded.EmbeddedDir{
 		Filename:   "",
-		DirModTime: time.Unix(1531381250, 0),
+		DirModTime: time.Unix(1531405548, 0),
 		ChildFiles: []*embedded.EmbeddedFile{
 			file2, // "Chart.yaml"
 			file3, // "requirements.yaml"
@@ -65,7 +65,7 @@ func init() {
 	// register embeddedBox
 	embedded.RegisterEmbeddedBox(`templates`, &embedded.EmbeddedBox{
 		Name: `templates`,
-		Time: time.Unix(1531381250, 0),
+		Time: time.Unix(1531405548, 0),
 		Dirs: map[string]*embedded.EmbeddedDir{
 			"":          dir1,
 			"templates": dir5,

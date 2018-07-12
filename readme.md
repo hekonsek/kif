@@ -2,6 +2,11 @@
 
 **kif** (Kube Is Fine) is a small tool providing simple and opinionated SRE infrastructure based on Kubernetes.
 
+When installed into Kubernetes cluster Kif provides the following pre-configured features:
+- [Nginx Ingress](https://github.com/kubernetes/ingress-nginx)
+- [ACME certificate manager (Jetstack Cert Manager)](https://github.com/jetstack/cert-manager)
+- [Prometheus](https://prometheus.io)
+
 ## Usage
 
 To install kif platform into a bare metal cluster execute the following command...
