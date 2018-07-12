@@ -18,12 +18,15 @@ var dryRun bool
 var ingressIP string
 var ingressNodeSelector string
 
+var caCertEmail string
+
 func init() {
 	createPlatformCmd.Flags().BoolVarP(&dryRun, "verbose", "v", false, "Indicates if a verbose output mode should be used.")
 	createPlatformCmd.Flags().BoolVarP(&dryRun, "dry-run", "d", false, "Indicates if a dry run should be used i.e. kif should generate Helm charts without executing them.")
 	createPlatformCmd.Flags().StringVar(&profile, "cloud", "baremetal", "Cloud provider to use.")
 	createPlatformCmd.Flags().StringVar(&ingressIP, "ingress-ip", "", "IP address of ingress node.")
 	createPlatformCmd.Flags().StringVar(&ingressNodeSelector, "ingressNodeSelector", "machine0001", "Node selector of ingress pod.")
+	createPlatformCmd.Flags().StringVar(&caCertEmail, "cert-email", "", "CA certificate administrator e-mail used during ACME registration process.")
 	rootCmd.AddCommand(createPlatformCmd)
 }
 
@@ -35,35 +38,17 @@ var createPlatformCmd = &cobra.Command{
 		templateBox, err := rice.FindBox("templates")
 		ExitOnError(err)
 
-		skrtPlatform := NewSkrtPlatform()
-		err = os.MkdirAll(skrtPlatform.Sandbox, 0700)
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
-		err = os.MkdirAll(skrtPlatform.Sandbox+"/templates", 0700)
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
+		kifPlatform := OrExitOnError(NewKifPlatform()).(KifPlatform)
 
-		chart, err := templateBox.Bytes("Chart.yaml")
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
-		err = ioutil.WriteFile(skrtPlatform.Sandbox+"/Chart.yaml", chart, 0644)
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
+		chart := OrExitOnError(templateBox.Bytes("Chart.yaml")).([]byte)
+		ExitOnError(ioutil.WriteFile(kifPlatform.Sandbox+"/Chart.yaml", chart, 0644))
 
 		requirements, err := templateBox.Bytes("requirements.yaml")
 		if err != nil {
 			fmt.Println(err)
 			return
 		}
-		err = ioutil.WriteFile(skrtPlatform.Sandbox+"/requirements.yaml", requirements, 0644)
+		err = ioutil.WriteFile(kifPlatform.Sandbox+"/requirements.yaml", requirements, 0644)
 		if err != nil {
 			fmt.Println(err)
 			return
@@ -79,13 +64,17 @@ var createPlatformCmd = &cobra.Command{
 			fmt.Println(err)
 			return
 		}
-		valuesFile, err := os.Create(skrtPlatform.Sandbox + "/values.yml")
+		valuesFile, err := os.Create(kifPlatform.Sandbox + "/values.yml")
 		if err != nil {
 			fmt.Println(err)
 			return
 		}
 		if ingressIP == "" {
-			fmt.Println("Ingress IP cannot be empty. Please use --ingressIP option.")
+			fmt.Println("Ingress IP cannot be empty. Please use --ingress-ip option.")
+			os.Exit(-1)
+		}
+		if caCertEmail == "" {
+			fmt.Println("CA cert admin e-mail cannot be empty. Please use --cert-email option.")
 			os.Exit(-1)
 		}
 
@@ -94,6 +83,9 @@ var createPlatformCmd = &cobra.Command{
 				"ExternalIp":   ingressIP,
 				"NodeSelector": ingressNodeSelector,
 			},
+			"CertManager": {
+				"Email": caCertEmail,
+			},
 			"Prometheus": {
 				"Host": fmt.Sprintf("prometheus.%s.nip.io", ingressIP),
 			},
@@ -101,13 +93,21 @@ var createPlatformCmd = &cobra.Command{
 		err = valuesTemplate.Execute(valuesFile, valuesx)
 		ExitOnError(err)
 
-		command := exec.Command("htpasswd", "-c", "-b", skrtPlatform.Sandbox+"/auth", "admin", "admin")
+		command := exec.Command("htpasswd", "-c", "-b", kifPlatform.Sandbox+"/auth", "admin", "admin")
 		commandOutput, err := command.CombinedOutput()
 		ExitOnError(err)
 		if verbose {
 			println("Generating basic auth authentication for Prometheus:")
 			println(string(commandOutput))
 		}
+
+		issuer, err := templateBox.String("issuer-letsencrypt.yml")
+		ExitOnError(err)
+		issuerTemplate, err := template.New("issuer").Parse(issuer)
+		ExitOnError(err)
+		issuerTemplateFile, err := os.Create(kifPlatform.Sandbox + "/templates/issuer-letsencrypt.yml")
+		ExitOnError(err)
+		ExitOnError(issuerTemplate.Execute(issuerTemplateFile, valuesx))
 
 		prometheusAuthSecretTemplateFile, err := templateBox.String("secret-ingress-auth-prometheus.yml")
 		ExitOnError(err)
@@ -116,9 +116,9 @@ var createPlatformCmd = &cobra.Command{
 			fmt.Println(err)
 			return
 		}
-		prometheusIngressAuthFile, err := os.Create(skrtPlatform.Sandbox + "/templates/secret-ingress-auth-prometheus.yml")
+		prometheusIngressAuthFile, err := os.Create(kifPlatform.Sandbox + "/templates/secret-ingress-auth-prometheus.yml")
 		ExitOnError(err)
-		auth, err := ioutil.ReadFile(skrtPlatform.Sandbox + "/auth")
+		auth, err := ioutil.ReadFile(kifPlatform.Sandbox + "/auth")
 		ExitOnError(err)
 		valuesx["Prometheus"]["Ingress"] = map[string]interface{}{
 			"Auth": base64.StdEncoding.EncodeToString(auth),
@@ -127,13 +127,13 @@ var createPlatformCmd = &cobra.Command{
 		ExitOnError(err)
 
 		if dryRun {
-			println("Platform chart generated successfully: " + skrtPlatform.Sandbox)
+			println("Platform chart generated successfully: " + kifPlatform.Sandbox)
 		} else {
-			command = exec.Command("helm", "dependency", "update", skrtPlatform.Sandbox)
+			command = exec.Command("helm", "dependency", "update", kifPlatform.Sandbox)
 			commandOutput, _ = command.CombinedOutput()
 			println(string(commandOutput))
 
-			command = exec.Command("helm", "install", "--namespace=kube-system", "--name=skrt", skrtPlatform.Sandbox, "--values="+skrtPlatform.Sandbox+"/values.yml")
+			command = exec.Command("helm", "install", "--namespace=kube-system", "--name=skrt", kifPlatform.Sandbox, "--values="+kifPlatform.Sandbox+"/values.yml")
 			commandOutput, _ = command.CombinedOutput()
 			println(string(commandOutput))
 		}
@@ -144,10 +144,15 @@ type KifPlatform struct {
 	Sandbox string
 }
 
-func NewSkrtPlatform() KifPlatform {
-	return KifPlatform{
-		Sandbox: fmt.Sprintf("/tmp/kif_%d", time.Now().Unix()),
+func NewKifPlatform() (*KifPlatform, error) {
+	sandbox := fmt.Sprintf("/tmp/kif_%d", time.Now().Unix())
+	err := os.MkdirAll(sandbox+"/templates", 0700)
+	if err != nil {
+		return nil, err
 	}
+	return &KifPlatform{
+		Sandbox: sandbox,
+	}, nil
 }
 
 // Helper
@@ -157,4 +162,9 @@ func ExitOnError(err error) {
 		fmt.Println(err)
 		os.Exit(-1)
 	}
+}
+
+func OrExitOnError(value interface{}, err error) interface{} {
+	ExitOnError(err)
+	return value
 }
