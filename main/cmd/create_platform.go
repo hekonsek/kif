@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/GeertJohan/go.rice"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v2"
 	"html/template"
 	"io/ioutil"
 	"os"
@@ -17,6 +18,7 @@ var profile string
 var dryRun bool
 var chartName string
 var chartVersion string
+var extraRequirements string
 
 var ingressIP string
 var ingressNodeSelector string
@@ -29,6 +31,7 @@ func init() {
 	createPlatformCmd.Flags().StringVar(&profile, "cloud", "baremetal", "Cloud provider to use.")
 	createPlatformCmd.Flags().StringVar(&chartName, "chart-name", "kif", "Name of the generated chart.")
 	createPlatformCmd.Flags().StringVar(&chartVersion, "chart-version", "0.0.0", "Version of the generated chart.")
+	createPlatformCmd.Flags().StringVar(&extraRequirements, "extra-requirements", "", "Extra requirements to be included in generated chart requirements file.")
 
 	createPlatformCmd.Flags().StringVar(&ingressIP, "ingress-ip", "", "IP address of ingress node.")
 	createPlatformCmd.Flags().StringVar(&ingressNodeSelector, "ingress-node-selector", "machine0001", "Node selector of ingress pod.")
@@ -71,9 +74,7 @@ var createPlatformCmd = &cobra.Command{
 		}
 
 		ExitOnError(kif.RenderTemplate("Chart.yaml"))
-
-		requirements := OrExitOnError(kif.TemplatesBox.Bytes("requirements.yaml")).([]byte)
-		ExitOnError(ioutil.WriteFile(kif.Sandbox+"/requirements.yaml", requirements, 0644))
+		ExitOnError(kif.RenderRequirements(extraRequirements))
 
 		valuesTemplateText, err := kif.TemplatesBox.String("values.yml")
 		if err != nil {
@@ -91,9 +92,12 @@ var createPlatformCmd = &cobra.Command{
 			return
 		}
 
+		ExitMessageOnError(
+			kif.RenderTemplate("templates/issuer-letsencrypt.yml"),
+			"Cannot generate Let's Encrypt ACME issuer")
+
 		err = valuesTemplate.Execute(valuesFile, kif.Configuration)
 		ExitOnError(err)
-
 		command := exec.Command("htpasswd", "-c", "-b", kif.Sandbox+"/auth", "admin", "admin")
 		commandOutput, err := command.CombinedOutput()
 		ExitOnError(err)
@@ -101,9 +105,6 @@ var createPlatformCmd = &cobra.Command{
 			println("Generating basic auth authentication for Prometheus:")
 			println(string(commandOutput))
 		}
-
-		ExitOnError(kif.RenderTemplate("templates/issuer-letsencrypt"))
-
 		prometheusAuthSecretTemplateFile, err := kif.TemplatesBox.String("secret-ingress-auth-prometheus.yml")
 		ExitOnError(err)
 		prometheusIngressAuthTemplate, err := template.New("prometheusAuthSecretTemplate").Parse(prometheusAuthSecretTemplateFile)
@@ -183,11 +184,53 @@ func (kif *KifPlatform) RenderTemplate(name string) error {
 	return nil
 }
 
+func (kif *KifPlatform) RenderRequirements(extraRequirements string) error {
+	requirementsYaml, err := kif.TemplatesBox.Bytes("requirements.yaml")
+	if err != nil {
+		return err
+	}
+	requirements := map[string]interface{}{}
+	err = yaml.Unmarshal(requirementsYaml, &requirements)
+	if err != nil {
+		return err
+	}
+	if extraRequirements != "" {
+		extraRequirementsYaml, err := ioutil.ReadFile(extraRequirements)
+		if err != nil {
+			return err
+		}
+		extraRequirementsMap := map[string]interface{}{}
+		err = yaml.Unmarshal(extraRequirementsYaml, &extraRequirementsMap)
+		if err != nil {
+			return err
+		}
+		for _, dependency := range extraRequirementsMap["dependencies"].([]interface{}) {
+			requirements["dependencies"] = append(requirements["dependencies"].([]interface{}), dependency)
+		}
+	}
+	requirementsYaml, err = yaml.Marshal(requirements)
+	if err != nil {
+		return err
+	}
+	err = ioutil.WriteFile(kif.Sandbox+"/requirements.yaml", requirementsYaml, 0644)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 // Helper
 
 func ExitOnError(err error) {
 	if err != nil {
 		fmt.Println(err)
+		os.Exit(-1)
+	}
+}
+
+func ExitMessageOnError(err error, message string) {
+	if err != nil {
+		fmt.Println(fmt.Sprintf("%s: %s", message, err))
 		os.Exit(-1)
 	}
 }

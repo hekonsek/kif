@@ -54,3 +54,19 @@ func TestThatKifPlatformRenderedChartWithNameAndVersion(t *testing.T) {
 	assert.Contains(t, chartText, `name: "SomeName"`)
 	assert.Contains(t, chartText, `version: "SomeVersion"`)
 }
+
+func TestThatKifPlatformRenderedExtraRequirements(t *testing.T) {
+	kif, err := NewKifPlatform()
+	assert.NoError(t, err)
+	err = ioutil.WriteFile("/tmp/extra-requirements.yml", []byte(`dependencies:
+- name: foo
+  repository: https://kubernetes-charts.storage.googleapis.com/
+  version: 0.0.0`), 0644)
+	assert.NoError(t, err)
+	err = kif.RenderRequirements("/tmp/extra-requirements.yml")
+	assert.NoError(t, err)
+	chart, err := ioutil.ReadFile(kif.Sandbox + "/requirements.yaml")
+	assert.NoError(t, err)
+	chartText := string(chart)
+	assert.Contains(t, chartText, `name: foo`)
+}
