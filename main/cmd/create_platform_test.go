@@ -5,6 +5,7 @@ import (
 	"io/ioutil"
 	"os"
 	"testing"
+	"gopkg.in/yaml.v2"
 )
 
 func TestThatNilErrorDoesNotExitApplication(t *testing.T) {
@@ -69,4 +70,36 @@ func TestThatKifPlatformRenderedExtraRequirements(t *testing.T) {
 	assert.NoError(t, err)
 	chartText := string(chart)
 	assert.Contains(t, chartText, `name: foo`)
+}
+
+func TestThatKifPlatformRenderedExtraValues(t *testing.T) {
+	kif, err := NewKifPlatform()
+	assert.NoError(t, err)
+	err = ioutil.WriteFile("/tmp/extra-values.yml", []byte(`prometheus:
+  foo: bar`), 0644)
+	assert.NoError(t, err)
+	err = kif.RenderValues("/tmp/extra-values.yml")
+	assert.NoError(t, err)
+	chart, err := ioutil.ReadFile(kif.Sandbox + "/values.yml")
+	assert.NoError(t, err)
+	generatedValues := map[string]map[string]interface{}{}
+	err = yaml.Unmarshal(chart, &generatedValues)
+	assert.NoError(t, err)
+	assert.Equal(t, generatedValues["prometheus"]["foo"], "bar")
+}
+
+func TestThatKifPlatformExtraValuesMergePreservedExistingValues(t *testing.T) {
+	kif, err := NewKifPlatform()
+	assert.NoError(t, err)
+	err = ioutil.WriteFile("/tmp/extra-values.yml", []byte(`prometheus:
+  foo: bar`), 0644)
+	assert.NoError(t, err)
+	err = kif.RenderValues("/tmp/extra-values.yml")
+	assert.NoError(t, err)
+	chart, err := ioutil.ReadFile(kif.Sandbox + "/values.yml")
+	assert.NoError(t, err)
+	generatedValues := map[string]map[string]interface{}{}
+	err = yaml.Unmarshal(chart, &generatedValues)
+	assert.NoError(t, err)
+	assert.NotNil(t, generatedValues["prometheus"]["alertmanager"])
 }

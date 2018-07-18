@@ -11,6 +11,8 @@ import (
 	"os"
 	"os/exec"
 	"time"
+	"github.com/imdario/mergo"
+	"bytes"
 )
 
 var verbose bool
@@ -18,6 +20,7 @@ var profile string
 var dryRun bool
 var chartName string
 var chartVersion string
+var extraValues string
 var extraRequirements string
 
 var ingressIP string
@@ -31,6 +34,7 @@ func init() {
 	createPlatformCmd.Flags().StringVar(&profile, "cloud", "baremetal", "Cloud provider to use.")
 	createPlatformCmd.Flags().StringVar(&chartName, "chart-name", "kif", "Name of the generated chart.")
 	createPlatformCmd.Flags().StringVar(&chartVersion, "chart-version", "0.0.0", "Version of the generated chart.")
+	createPlatformCmd.Flags().StringVar(&extraValues, "extra-values", "", "Extra values to be included in generated chart values file.")
 	createPlatformCmd.Flags().StringVar(&extraRequirements, "extra-requirements", "", "Extra requirements to be included in generated chart requirements file.")
 
 	createPlatformCmd.Flags().StringVar(&ingressIP, "ingress-ip", "", "IP address of ingress node.")
@@ -75,29 +79,12 @@ var createPlatformCmd = &cobra.Command{
 
 		ExitOnError(kif.RenderTemplate("Chart.yaml"))
 		ExitOnError(kif.RenderRequirements(extraRequirements))
-
-		valuesTemplateText, err := kif.TemplatesBox.String("values.yml")
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
-		valuesTemplate, err := template.New("valuesTemplate").Parse(valuesTemplateText)
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
-		valuesFile, err := os.Create(kif.Sandbox + "/values.yml")
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
+		ExitOnError(kif.RenderValues(extraValues))
 
 		ExitMessageOnError(
 			kif.RenderTemplate("templates/issuer-letsencrypt.yml"),
 			"Cannot generate Let's Encrypt ACME issuer")
 
-		err = valuesTemplate.Execute(valuesFile, kif.Configuration)
-		ExitOnError(err)
 		command := exec.Command("htpasswd", "-c", "-b", kif.Sandbox+"/auth", "admin", "admin")
 		commandOutput, err := command.CombinedOutput()
 		ExitOnError(err)
@@ -178,6 +165,52 @@ func (kif *KifPlatform) RenderTemplate(name string) error {
 		return err
 	}
 	err = parsedTemplate.Execute(targetFile, kif.Configuration)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (kif *KifPlatform) RenderValues(extraValues string) error {
+	valuesYmlTemplateBytes, err := kif.TemplatesBox.Bytes("values.yml")
+	if err != nil {
+		return err
+	}
+	valuesYmlTemplate, err := template.New("valuesYmlTemplate").Parse(string(valuesYmlTemplateBytes))
+	if err != nil {
+		return err
+	}
+	valuesYml := bytes.NewBufferString("")
+	err = valuesYmlTemplate.Execute(valuesYml, kif.Configuration)
+	if err != nil {
+		return err
+	}
+
+	values := map[string]interface{}{}
+	err = yaml.Unmarshal(valuesYml.Bytes(), &values)
+	if err != nil {
+		return err
+	}
+	if extraValues != "" {
+		extraRequirementsYaml, err := ioutil.ReadFile(extraValues)
+		if err != nil {
+			return err
+		}
+		extraRequirementsMap := map[string]interface{}{}
+		err = yaml.Unmarshal(extraRequirementsYaml, &extraRequirementsMap)
+		if err != nil {
+			return err
+		}
+		err = mergo.Merge(&values, extraRequirementsMap)
+		if err != nil {
+			return err
+		}
+	}
+	valuesYmlBytes, err := yaml.Marshal(values)
+	if err != nil {
+		return err
+	}
+	err = ioutil.WriteFile(kif.Sandbox+"/values.yml", valuesYmlBytes, 0644)
 	if err != nil {
 		return err
 	}
