@@ -1,9 +1,11 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/base64"
 	"fmt"
 	"github.com/GeertJohan/go.rice"
+	"github.com/imdario/mergo"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v2"
 	"html/template"
@@ -11,8 +13,6 @@ import (
 	"os"
 	"os/exec"
 	"time"
-	"github.com/imdario/mergo"
-	"bytes"
 )
 
 var verbose bool

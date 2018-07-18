@@ -30,14 +30,14 @@ func init() {
 	}
 	file7 := &embedded.EmbeddedFile{
 		Filename:    "values.yml",
-		FileModTime: time.Unix(1530821548, 0),
+		FileModTime: time.Unix(1531906671, 0),
 		Content:     string("nginx-ingress:\n  controller:\n    hostNetwork: true\n    service:\n      externalIPs:\n        - {{ .Ingress.ExternalIp }}\n    nodeSelector:\n      kubernetes.io/hostname: {{ .Ingress.NodeSelector }}\nprometheus:\n  alertmanager:\n    persistentVolume:\n      enabled: False\n  server:\n    persistentVolume:\n      enabled: False\n    ingress:\n      enabled: True\n      annotations:\n        kubernetes.io/ingress.class: nginx\n        nginx.ingress.kubernetes.io/auth-type: basic\n        nginx.ingress.kubernetes.io/auth-secret: ingress-auth-prometheus\n        nginx.ingress.kubernetes.io/auth-realm: \"Authentication required to access Prometheus.\"\n      hosts:\n        - {{ .Prometheus.Host }}\n      tls:\n      - hosts:\n        - {{ .Prometheus.Host }}\n        secretName: {{ .Prometheus.Host }}\n"),
 	}
 
 	// define dirs
 	dir1 := &embedded.EmbeddedDir{
 		Filename:   "",
-		DirModTime: time.Unix(1531405548, 0),
+		DirModTime: time.Unix(1531906671, 0),
 		ChildFiles: []*embedded.EmbeddedFile{
 			file2, // "Chart.yaml"
 			file3, // "requirements.yaml"
@@ -65,7 +65,7 @@ func init() {
 	// register embeddedBox
 	embedded.RegisterEmbeddedBox(`templates`, &embedded.EmbeddedBox{
 		Name: `templates`,
-		Time: time.Unix(1531405548, 0),
+		Time: time.Unix(1531906671, 0),
 		Dirs: map[string]*embedded.EmbeddedDir{
 			"":          dir1,
 			"templates": dir5,

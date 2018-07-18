@@ -2,10 +2,10 @@ package cmd
 
 import (
 	"github.com/stretchr/testify/assert"
+	"gopkg.in/yaml.v2"
 	"io/ioutil"
 	"os"
 	"testing"
-	"gopkg.in/yaml.v2"
 )
 
 func TestThatNilErrorDoesNotExitApplication(t *testing.T) {
