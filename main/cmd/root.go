@@ -13,9 +13,6 @@ var rootCmd = &cobra.Command{
 	Long: `kif (Kube Is Fine) is a small tool providing simple and opinionated SRE infrastructure based on Kubernetes.
                 
 See https://github.com/hekonsek/kif`,
-	Run: func(cmd *cobra.Command, args []string) {
-		cmd.Help()
-	},
 }
 
 func Execute() {

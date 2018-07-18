@@ -42,11 +42,11 @@ func init() {
 
 	createPlatformCmd.Flags().StringVar(&caCertEmail, "cert-email", "", "CA certificate administrator e-mail used during ACME registration process.")
 
-	rootCmd.AddCommand(createPlatformCmd)
+	createCmd.AddCommand(createPlatformCmd)
 }
 
 var createPlatformCmd = &cobra.Command{
-	Use:   "create platform",
+	Use:   "platform",
 	Short: "Create kif platform.",
 	Long:  `Create kif platform.`,
 	Run: func(cmd *cobra.Command, args []string) {
